@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Simple Text Editor</string>
+    <string name="app_name">Simple Text Editor DEV</string>
     <string name="app_name_settings">Simple Text Editor - Settings</string>
     <string name="Open">Open</string>
     <string name="New">New</string>

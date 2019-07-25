@@ -7,6 +7,8 @@ import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.Locale;
+import java.util.Timer;
+import java.util.TimerTask;
 
 import android.Manifest;
 import android.app.Activity;
@@ -26,6 +28,7 @@ import android.support.v4.app.ActivityCompat;
 import android.text.Editable;
 import android.text.InputType;
 import android.text.TextWatcher;
+import android.util.Log;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.widget.Toast;
@@ -41,6 +44,8 @@ public class EditorActivity extends Activity {
 	private static final int DO_OPEN = 1;
 	private static final int DO_NEW = 2;
 
+	private static final int MAX_AUTOSAVE_FILENAME_LENGTH = 16;
+
 	private EditTextSelectable mText;
 	private TextWatcher watcher;
 	String filename = TPStrings.EMPTY;
@@ -52,8 +57,13 @@ public class EditorActivity extends Activity {
 	Handler handler = new Handler();
 	
 	static int selectionStart = 0;
-	
-	
+
+	/** Quick save to notes folder if true */
+	boolean autoSave = true;
+	String prevAutosavePath;
+
+	Timer autoSaveTimer;
+
 	/** Called when the activity is first created. */
 	@Override
 	public void onCreate(Bundle savedInstanceState) {
@@ -126,7 +136,65 @@ public class EditorActivity extends Activity {
 		mText.requestFocus();
 		
 		TPApplication.instance.readLocale(); //additionally check locale
+
+		autoSaveTimer = new Timer();
+		autoSaveTimer.scheduleAtFixedRate(autosaveTask, 0, 2000);
 	}
+
+	TimerTask autosaveTask = new TimerTask() {
+
+		@Override
+		public void run() {
+			if (!changed) {
+				return;
+			}
+
+			// Calculate path by the first line of the file
+			// Otherwise the current file path will be used (eg. set by opening a file)
+			if (filename == null || filename.isEmpty() || filename.startsWith(TPApplication.settings.quick_notes_path)) {
+				String contents = mText.getText().toString();
+				if (contents.isEmpty()) {
+					return;
+				}
+				int endIndex = Math.min(contents.length(), MAX_AUTOSAVE_FILENAME_LENGTH);
+				String contentsShort = contents.substring(0, endIndex);
+				String autoFileName = contentsShort.split("\n")[0].trim();
+				autoFileName = autoFileName.replace(" ", "_").replaceAll("\\W+", "");
+				if (autoFileName.isEmpty()) {
+					autoFileName = "Unnamed";
+				}
+
+				// This variable is in fact the file path, but I don't want to rename it yet
+				// to have smaller diff to the original code
+				// TODO: increment file name if already taken, but detect if name was incremented already
+				filename = TPApplication.settings.quick_notes_path + "/" + autoFileName + ".txt";
+			}
+
+			Log.i("autosaveTask", "File path: " + filename);
+
+			runOnUiThread(new Runnable() {
+
+				@Override
+				public void run() {
+					saveNamedFile(false);
+
+					if (prevAutosavePath == null || prevAutosavePath.equals(filename)) {
+						prevAutosavePath = filename;
+						return;
+					}
+
+					File prevFile = new File(prevAutosavePath);
+					if (!prevFile.exists()) {
+						return;
+					}
+					if (!prevFile.delete()) {
+						showToast("Failed to remove previous file: " + prevAutosavePath);
+					}
+					prevAutosavePath = filename;
+				}
+			});
+		}
+	};
 
     /**
      * Checks if the app has permission to write to device storage
@@ -166,25 +234,32 @@ public class EditorActivity extends Activity {
 		super.onPause();
 	}
 
-	
+
 	void restoreState(Bundle state){
 		mText.setText(state.getString(TPStrings.TEXT));
-        filename = state.getString(TPStrings.FILENAME);
-        changed = state.getBoolean(TPStrings.CHANGED);
-    }
-    
-	
-    protected void onSaveInstanceState(Bundle outState) {
-        super.onSaveInstanceState(outState);
-        outState.putString(TPStrings.TEXT, mText.getText().toString());
-        outState.putString(TPStrings.FILENAME,filename);
-        outState.putBoolean(TPStrings.CHANGED, changed);
-        
-    }
+		filename = state.getString(TPStrings.FILENAME);
+		prevAutosavePath = state.getString("prevAutosavePath");
+		changed = state.getBoolean(TPStrings.CHANGED);
+	}
+
+
+	protected void onSaveInstanceState(Bundle outState) {
+		super.onSaveInstanceState(outState);
+		outState.putString(TPStrings.TEXT, mText.getText().toString());
+		outState.putString(TPStrings.FILENAME,filename);
+		outState.putBoolean(TPStrings.CHANGED, changed);
+		outState.putString("prevAutosavePath", prevAutosavePath);
+	}
+
 
 	protected void onStop() {
 		mText.removeTextChangedListener(watcher); 	// to prevent text
 													// modification once rotated
+		if(autoSaveTimer != null) {
+			autoSaveTimer.cancel();
+			autoSaveTimer.purge();
+			autoSaveTimer = null;
+		}
 		super.onStop();
 	}
 	
@@ -277,7 +352,13 @@ public class EditorActivity extends Activity {
 		if (filename.equals(TPStrings.EMPTY)) {
 			title = TPStrings.NEW_FILE_TXT;
 		} else {
-			title = filename;
+			String[] filepath_split = filename.split("/");
+			int length = filepath_split.length;
+			if(length >= 2) {
+				title = filepath_split[length-2] + "/" + filepath_split[length-1];
+			} else {
+				title = filename;
+			}
 		}
 		if (changed) {
 			title = title + TPStrings.STAR;
@@ -399,6 +480,7 @@ public class EditorActivity extends Activity {
 	}
 
 	protected void clearFile() {
+		prevAutosavePath = null;
 		this.mText.setText(TPStrings.EMPTY);
 		filename = TPStrings.EMPTY;
 		changed = false;
@@ -453,7 +535,7 @@ public class EditorActivity extends Activity {
 			Intent intent = new Intent(this.getBaseContext(), FileDialog.class);
 			this.startActivityForResult(intent, REQUEST_SAVE);
 		} else {
-		    saveNamedFile();
+		    saveNamedFile(true);
 		}
 	}
 
@@ -482,7 +564,7 @@ public class EditorActivity extends Activity {
                         }
                     }).show();
         } else {
-            saveNamedFile();
+            saveNamedFile(true);
         }
     }
 
@@ -494,7 +576,7 @@ public class EditorActivity extends Activity {
         return false;
     }
 
-	protected void saveNamedFile() {
+	protected void saveNamedFile(boolean showSuccess) {
 		try {
 			File f = new File(filename);
 			if (!f.exists()) {
@@ -508,7 +590,9 @@ public class EditorActivity extends Activity {
 			
 			fos.write(s.getBytes(TPApplication.settings.file_encoding));
 			fos.close();
-			showToast(l(R.string.File_Written));
+			if(showSuccess) {
+				showToast(l(R.string.File_Written));
+			}
 			changed = false;
 			updateTitle();
 
@@ -552,6 +636,7 @@ public class EditorActivity extends Activity {
 			this.mText.setText(ttt);
 			showToast(l(R.string.File_opened_) + filename);
 			changed = false;
+			prevAutosavePath = filename;
 			this.filename = filename;
 			if (!TPApplication.settings.last_filename.equals(filename)) {
 				TPApplication.instance.saveLastFilename(filename);
@@ -615,6 +700,7 @@ public class EditorActivity extends Activity {
 
 		if (requestCode == REQUEST_SAVE) {
 			if (resultCode == Activity.RESULT_OK) {
+				prevAutosavePath = null;
 				filename = data
 						.getStringExtra(TPStrings.RESULT_PATH);
 				this.saveFileWithConfirmation();

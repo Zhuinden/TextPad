@@ -12,4 +12,7 @@ public class Settings {
 	String file_encoding = "";
 	String last_filename = "";
 	String delimiters;
+
+	// TODO: Make it configurable
+	String quick_notes_path = "/storage/emulated/0/_GDrive/_Test";
 }
