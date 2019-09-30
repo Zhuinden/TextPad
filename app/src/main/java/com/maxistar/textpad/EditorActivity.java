@@ -14,12 +14,15 @@ import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.SearchManager;
+import android.content.ClipData;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Typeface;
+import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.preference.PreferenceManager;
@@ -51,11 +54,11 @@ public class EditorActivity extends Activity {
 	String filename = TPStrings.EMPTY;
 	boolean changed = false;
 	boolean exitDialogShown = false;
-	
+
 	private int open_when_saved = DO_NOTHING; // to figure out better way
 
 	Handler handler = new Handler();
-	
+
 	static int selectionStart = 0;
 
 	/** Quick save to notes folder if true */
@@ -80,10 +83,16 @@ public class EditorActivity extends Activity {
         	restoreState(savedInstanceState);
         } else {
         	Intent i = this.getIntent();
-			if (TPStrings.ACTION_VIEW.equals(i.getAction())) {
+
+			if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN && Intent.ACTION_SEND.equals(i.getAction()) && i.getClipData() != null && i.getClipData().getItemCount() > 0) {
+				ClipData.Item item = i.getClipData().getItemAt(0);
+				Uri uri = item.getUri();
+                if (uri != null && uri.getPath() != null) {
+                    openNamedFile(uri.getPath());
+                }
+			} else if (TPStrings.ACTION_VIEW.equals(i.getAction())) {
 				android.net.Uri u = i.getData();
 				openNamedFile(u.getPath());
-				
 			} else { // it this is just created
 				if (this.filename.equals(TPStrings.EMPTY)) {
 					if (TPApplication.settings.open_last_file) {
@@ -92,7 +101,7 @@ public class EditorActivity extends Activity {
 				}
 			}
         }
-		
+
 		watcher = new TextWatcher() {
 			@Override
 			public void afterTextChanged(Editable s) {
@@ -118,7 +127,7 @@ public class EditorActivity extends Activity {
 			@Override
 			public void run() {
 				mText.addTextChangedListener(watcher);
-				
+
 				mText.addOnSelectionChangedListener(new OnSelectionChangedListener(){
 
 					@Override
@@ -126,15 +135,15 @@ public class EditorActivity extends Activity {
 						// TODO Auto-generated method stub
 						selectionStart = mText.getSelectionStart();
 					}
-					
+
 				});
-				
+
 			}
 		}, 1000);
 
 		updateTitle();
 		mText.requestFocus();
-		
+
 		TPApplication.instance.readLocale(); //additionally check locale
 
 		autoSaveTimer = new Timer();
@@ -226,7 +235,7 @@ public class EditorActivity extends Activity {
 		super.onResume();
 		String t = mText.getText().toString().toLowerCase(Locale.getDefault());
 		if (selectionStart<t.length()) {
-			mText.setSelection(selectionStart,selectionStart);			
+			mText.setSelection(selectionStart,selectionStart);
 		}
 	}
 
@@ -262,16 +271,28 @@ public class EditorActivity extends Activity {
 		}
 		super.onStop();
 	}
-	
+
 	public void onNewIntent(Intent intent)
 	{
 		super.onNewIntent(intent);
+
+		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
+			if (Intent.ACTION_SEND.equals(intent.getAction()) && intent.getClipData() != null && intent.getClipData().getItemCount() > 0) {
+				ClipData.Item item = intent.getClipData().getItemAt(0);
+				Uri uri = item.getUri();
+				if (uri != null && uri.getPath() != null) {
+                    openNamedFile(uri.getPath());
+                }
+				return;
+			}
+		}
+
 		// search action
-		if (Intent.ACTION_SEARCH.equals(intent.getAction())) {
+        if (Intent.ACTION_SEARCH.equals(intent.getAction())) {
 			final String query = intent.getStringExtra(SearchManager.QUERY);
 			SearchRecentSuggestions suggestions = new SearchRecentSuggestions(this, TPStrings.AUTHORITY, SearchSuggestions.MODE);
 			suggestions.saveRecentQuery(query, null);
-			
+
 			handler.postDelayed(new Runnable(){
 				@Override
 				public void run() {
@@ -280,10 +301,10 @@ public class EditorActivity extends Activity {
 			}, 1000);
 		}
 	}
-	
+
 	@Override
-	public void onBackPressed() {       
-	    if (this.changed && !exitDialogShown) {          
+	public void onBackPressed() {
+	    if (this.changed && !exitDialogShown) {
 	        new AlertDialog.Builder(this)
 	            .setTitle(R.string.You_have_made_some_changes)
 	            .setMessage(R.string.Are_you_sure_to_quit)
@@ -292,9 +313,9 @@ public class EditorActivity extends Activity {
 	                    EditorActivity.super.onBackPressed();
 	                    exitDialogShown = false;
 	                }
-	            })            
+	            })
 	            .setPositiveButton(R.string.No, new DialogInterface.OnClickListener() {
-	                public void onClick(DialogInterface arg0, int arg1) {                    
+	                public void onClick(DialogInterface arg0, int arg1) {
 	                    //do nothing
 	                	exitDialogShown = false;
 	                }
@@ -316,17 +337,17 @@ public class EditorActivity extends Activity {
 
 	void doSearch(String query){
 			String t = mText.getText().toString().toLowerCase(Locale.getDefault());
-			
+
 			if (selectionStart >= t.length()) {
 				selectionStart = -1;
 			}
 
-		    int start;			
+		    int start;
 			start = t.indexOf(query.toLowerCase(Locale.getDefault()), selectionStart+1);
 			if (start == -1) {	// loop search
 				start = t.indexOf(query.toLowerCase(Locale.getDefault()), 0);
-			}			
-				
+			}
+
 			if (start != -1) {
 				selectionStart = start;
 				mText.setSelection(start, start + query.length());
@@ -335,11 +356,11 @@ public class EditorActivity extends Activity {
 				Toast.makeText(this, formatString(R.string.s_not_found, query), Toast.LENGTH_SHORT).show();
 			}
 	}
-	
+
 	String formatString(int stringId, String parameter){
 		return this.getResources().getString(stringId, parameter);
 	}
-	
+
 	void openLastFile() {
 		if (!TPApplication.settings.last_filename.equals(TPStrings.EMPTY)) {
 			showToast(formatString(R.string.opened_last_edited_file,TPApplication.settings.last_filename));
@@ -520,8 +541,8 @@ public class EditorActivity extends Activity {
 		} else {
 			openNewFile();
 		}
-		
-		
+
+
 	}
 
 	protected void openNewFile() {
@@ -585,9 +606,9 @@ public class EditorActivity extends Activity {
 
 			FileOutputStream fos = new FileOutputStream(f);
 			String s = this.mText.getText().toString();
-			
+
 			s = applyEndings(s);
-			
+
 			fos.write(s.getBytes(TPApplication.settings.file_encoding));
 			fos.close();
 			if(showSuccess) {
@@ -632,7 +653,7 @@ public class EditorActivity extends Activity {
 					TPApplication.settings.file_encoding);
 
 			ttt = toUnixEndings(ttt);
-			
+
 			this.mText.setText(ttt);
 			showToast(l(R.string.File_opened_) + filename);
 			changed = false;
@@ -649,7 +670,7 @@ public class EditorActivity extends Activity {
 			this.showToast(l(R.string.Can_not_read_file));
 		}
 	}
-	
+
 	/**
 	 * @param value
 	 * @return
@@ -661,11 +682,11 @@ public class EditorActivity extends Activity {
 		if (TPStrings.WINDOWS.equals(to)){
 			value = value.replace(TPStrings.RN, TPStrings.N);
 			value = value.replace(TPStrings.R, TPStrings.N);
-			value = value.replace(TPStrings.N, TPStrings.RN); //simply replace unix endings to win endings			
+			value = value.replace(TPStrings.N, TPStrings.RN); //simply replace unix endings to win endings
 		}
 		else if (TPStrings.UNIX.equals(to)){ //just in case it was previously read as other encoding
 			value = value.replace(TPStrings.RN, TPStrings.N);
-			value = value.replace(TPStrings.R, TPStrings.N);			
+			value = value.replace(TPStrings.R, TPStrings.N);
 		}
 		else if (TPStrings.MACOS.equals(to)){
 			value = value.replace(TPStrings.RN, TPStrings.N);
@@ -674,7 +695,7 @@ public class EditorActivity extends Activity {
 		}
 		return value;
 	}
-	
+
 	/**
 	 * @param value
 	 *
@@ -683,17 +704,17 @@ public class EditorActivity extends Activity {
 	String toUnixEndings(String value){
 		String from = TPApplication.settings.delimiters;
 		if (TPStrings.DEFAULT.equals(from)) return value; //this way we spare memory but will be unable to fix delimiters
-		
+
 		//we should anyway fix any line delimenters
 		//replace \r\n first, then \r into \n this way we will get pure unix ending used in android
 		value = value.replace(TPStrings.RN, TPStrings.N);
 		value = value.replace(TPStrings.R, TPStrings.N);
-		
+
 		return value;
 	}
 
 	/**
-	 * 
+	 *
 	 */
 	public synchronized void onActivityResult(final int requestCode,
 			int resultCode, final Intent data) {
